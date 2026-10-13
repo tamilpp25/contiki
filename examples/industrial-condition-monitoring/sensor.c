@@ -13,21 +13,39 @@ static int16_t win_z[WINDOW_SAMPLES];
 
 
 /* =========================================================
- * Accelerometer
+ * Simulated accelerometer
+ *
+ * Every sample is random noise in [-amplitude, +amplitude] mg per axis.
+ * RMS of such noise ~ amplitude / sqrt(3):
+ *   healthy window: +-100 mg -> RMS ~58 mg  (below the 90 mg threshold)
+ *   fault window:   +-300 mg -> RMS ~173 mg (above it -> ALERT)
+ *
+ * A window is a fault window with probability 1/SIM_FAULT_ONE_IN.
+ * Windows are taken every 5 s (12 per minute), so 1 in 12 gives on
+ * average one ALERT per minute.
  * ========================================================= */
 
+#define SIM_HEALTHY_MG    100
+#define SIM_FAULT_MG      300
+#define SIM_FAULT_ONE_IN  12
+
+/* Random value in [-amp, +amp] */
+static int16_t
+noise(int16_t amp)
+{
+  return (int16_t)(random_rand() % (2 * amp + 1)) - amp;
+}
+
 /*
- * PLACEHOLDER: no accelerometer driver is wired up yet. This returns
- * synthetic data (gravity on z plus noise) so the packet path can be
- * tested. Replace the body with the real 3-axis driver read, returning
- * milli-g.
+ * PLACEHOLDER: no accelerometer driver is wired up yet. Replace the
+ * body with the real 3-axis driver read, returning milli-g.
  */
 static void
-accel_read_xyz(int16_t *x, int16_t *y, int16_t *z)
+accel_read_xyz(int16_t amp, int16_t *x, int16_t *y, int16_t *z)
 {
-  *x = (int16_t)(random_rand() % 201) - 100;
-  *y = (int16_t)(random_rand() % 201) - 100;
-  *z = 1000 + (int16_t)(random_rand() % 201) - 100;
+  *x = noise(amp);
+  *y = noise(amp);
+  *z = noise(amp);
 }
 
 /*
@@ -39,13 +57,15 @@ sensor_sample_window(void)
 {
   const rtimer_clock_t period = RTIMER_SECOND / SAMPLE_RATE_HZ;
   rtimer_clock_t next = RTIMER_NOW();
+  int16_t amp = (random_rand() % SIM_FAULT_ONE_IN == 0) ?
+                SIM_FAULT_MG : SIM_HEALTHY_MG;
   uint16_t i;
 
   for(i = 0; i < WINDOW_SAMPLES; i++) {
     while(RTIMER_CLOCK_LT(RTIMER_NOW(), next)) {
       watchdog_periodic();
     }
-    accel_read_xyz(&win_x[i], &win_y[i], &win_z[i]);
+    accel_read_xyz(amp, &win_x[i], &win_y[i], &win_z[i]);
     next += period;
   }
 }

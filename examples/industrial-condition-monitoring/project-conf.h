@@ -156,8 +156,23 @@
 /* RMS frame period: 30 s or 60 s */
 #define APP_CONF_RMS_SEND_INTERVAL (30 * CLOCK_SECOND)
 
-/* Per-axis RMS (milli-g) that triggers ALERT + RAW frames, 0 = off */
-#define APP_CONF_ALERT_RMS_THRESHOLD 500
+/* How often a window is sampled and checked for an alert */
+#define APP_CONF_ALERT_CHECK_INTERVAL (5 * CLOCK_SECOND)
+
+/*
+ * Per-axis RMS (milli-g) that triggers an ALERT, 0 = off.
+ *
+ * ISO 10816-3 / ISO 20816-3, group 2 machines (15-300 kW) on a rigid
+ * foundation: zone B/C boundary = 2.8 mm/s velocity RMS ("unsatisfactory
+ * for long-term operation", the usual ALERT level; C/D = 4.5 mm/s is the
+ * damage/TRIP level). The standard is velocity based; converted to
+ * acceleration at the 50 Hz running speed (3000 rpm):
+ *   a = 2*pi*f*v = 2*pi*50*0.0028 = 0.88 m/s^2 = 90 mg
+ */
+#define APP_CONF_ALERT_RMS_THRESHOLD 90
+
+/* Also send the raw window after an ALERT (off for now) */
+#define APP_CONF_SEND_RAW_ON_ALERT 0
 
 /* Samples per RAW packet (6 bytes each) */
 #define APP_CONF_RAW_SAMPLES_PER_PACKET 8

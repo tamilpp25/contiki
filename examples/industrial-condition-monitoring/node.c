@@ -36,11 +36,25 @@
 #define RMS_SEND_INTERVAL (30 * CLOCK_SECOND)
 #endif
 
-/* RMS (milli-g) above which an alert + raw window is sent. 0 = never */
+/* How often a window is sampled and checked against the alert threshold */
+#ifdef APP_CONF_ALERT_CHECK_INTERVAL
+#define ALERT_CHECK_INTERVAL APP_CONF_ALERT_CHECK_INTERVAL
+#else
+#define ALERT_CHECK_INTERVAL (5 * CLOCK_SECOND)
+#endif
+
+/* Per-axis RMS (milli-g) above which an ALERT is sent. 0 = never */
 #ifdef APP_CONF_ALERT_RMS_THRESHOLD
 #define ALERT_RMS_THRESHOLD APP_CONF_ALERT_RMS_THRESHOLD
 #else
-#define ALERT_RMS_THRESHOLD 500
+#define ALERT_RMS_THRESHOLD 90
+#endif
+
+/* Also send the raw window after an ALERT (disabled for now) */
+#ifdef APP_CONF_SEND_RAW_ON_ALERT
+#define SEND_RAW_ON_ALERT APP_CONF_SEND_RAW_ON_ALERT
+#else
+#define SEND_RAW_ON_ALERT 0
 #endif
 
 #define RAW_TOTAL_CHUNKS \
@@ -118,6 +132,7 @@ send_alert(const uint16_t rms[3], uint8_t axes)
   uip_udp_packet_send(udp_conn, &pkt, sizeof(pkt));
 }
 
+#if SEND_RAW_ON_ALERT
 /* Send the whole current window as RAW chunks */
 static void
 send_raw_window(void)
@@ -141,12 +156,34 @@ send_raw_window(void)
     uip_udp_packet_send(udp_conn, &pkt, sizeof(pkt));
   }
 }
+#endif /* SEND_RAW_ON_ALERT */
+
+/* Bitmask of axes whose RMS is over the threshold: bit0 x, bit1 y, bit2 z */
+static uint8_t
+axes_over_threshold(const uint16_t rms[3])
+{
+  uint8_t axes = 0;
+
+#if ALERT_RMS_THRESHOLD > 0
+  if(rms[0] > ALERT_RMS_THRESHOLD) {
+    axes |= 1;
+  }
+  if(rms[1] > ALERT_RMS_THRESHOLD) {
+    axes |= 2;
+  }
+  if(rms[2] > ALERT_RMS_THRESHOLD) {
+    axes |= 4;
+  }
+#endif
+  return axes;
+}
 
 
 PROCESS_THREAD(leaf_process, ev, data)
 {
   static struct etimer startup_timer;
   static struct etimer send_timer;
+  static struct etimer rms_timer;
 
   PROCESS_BEGIN();
 
@@ -213,17 +250,24 @@ uip_ip6addr(&coordinator_ipaddr,
 
   leds_arch_set(LEDS_GREEN);
 
-  printf("\n[LEAF] Starting RMS reporting: every %lu s, %u ms window, "
-         "%u samples\n",
+  printf("\n[LEAF] Monitoring: %u ms window (%u samples) every %lu s, "
+         "RMS report every %lu s, alert above %u mg\n",
+         RMS_WINDOW_MS, WINDOW_SAMPLES,
+         (unsigned long)(ALERT_CHECK_INTERVAL / CLOCK_SECOND),
          (unsigned long)(RMS_SEND_INTERVAL / CLOCK_SECOND),
-         RMS_WINDOW_MS, WINDOW_SAMPLES);
+         ALERT_RMS_THRESHOLD);
 
 
   /* -------------------------------------------------------
-   * Periodic RMS transmission
+   * Monitoring loop
+   *
+   * Every ALERT_CHECK_INTERVAL: sample a window, compute RMS and send
+   * an ALERT right away if any axis is over the threshold.
+   * Every RMS_SEND_INTERVAL: also send that window's RMS.
    * ------------------------------------------------------- */
 
-  etimer_set(&send_timer, RMS_SEND_INTERVAL);
+  etimer_set(&send_timer, ALERT_CHECK_INTERVAL);
+  etimer_set(&rms_timer, RMS_SEND_INTERVAL);
 
   while(1) {
 
@@ -232,35 +276,27 @@ uip_ip6addr(&coordinator_ipaddr,
 
     if(rpl_get_any_dag() != NULL) {
       uint16_t rms[3];
+      uint8_t axes;
 
       sensor_sample_window();
       sensor_window_rms(rms);
 
-      printf("\n[LEAF] RMS seq %u: x=%u y=%u z=%u mg\n",
-             seq, rms[0], rms[1], rms[2]);
-      send_rms(rms);
-
-#if ALERT_RMS_THRESHOLD > 0
-      {
-        uint8_t axes = 0;
-
-        if(rms[0] > ALERT_RMS_THRESHOLD) {
-          axes |= 1;
-        }
-        if(rms[1] > ALERT_RMS_THRESHOLD) {
-          axes |= 2;
-        }
-        if(rms[2] > ALERT_RMS_THRESHOLD) {
-          axes |= 4;
-        }
-        if(axes) {
-          printf("[LEAF] ALERT axes 0x%x, sending %u raw packets\n",
-                 axes, RAW_TOTAL_CHUNKS);
-          send_alert(rms, axes);
-          send_raw_window();
-        }
-      }
+      axes = axes_over_threshold(rms);
+      if(axes) {
+        printf("\n[LEAF] ALERT seq %u axes 0x%x: x=%u y=%u z=%u mg\n",
+               seq, axes, rms[0], rms[1], rms[2]);
+        send_alert(rms, axes);
+#if SEND_RAW_ON_ALERT
+        send_raw_window();
 #endif
+      }
+
+      if(etimer_expired(&rms_timer)) {
+        etimer_reset(&rms_timer);
+        printf("\n[LEAF] RMS seq %u: x=%u y=%u z=%u mg\n",
+               seq, rms[0], rms[1], rms[2]);
+        send_rms(rms);
+      }
 
       seq++;
     } else {
