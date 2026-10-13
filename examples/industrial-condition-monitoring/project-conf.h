@@ -8,7 +8,8 @@
 #define WITH_TSCH 1
 #define WITH_TSCH_SECURITY 0
 
-#define TSCH_LOG_CONF_LEVEL 2
+#undef TSCH_LOG_CONF_LEVEL
+#define TSCH_LOG_CONF_LEVEL 0
 
 #undef IEEE802154_CONF_PANID
 #define IEEE802154_CONF_PANID 0x5254
@@ -149,6 +150,24 @@
 
 
 /* =========================================================
+ * Application: vibration reporting (see packet-format.h)
+ * ========================================================= */
+
+/* RMS frame period: 30 s or 60 s */
+#define APP_CONF_RMS_SEND_INTERVAL (30 * CLOCK_SECOND)
+
+/* RMS window length and sampling rate (80 samples per window) */
+#define APP_CONF_RMS_WINDOW_MS 80
+#define APP_CONF_SAMPLE_RATE_HZ 1000
+
+/* Per-axis RMS (milli-g) that triggers ALERT + RAW frames, 0 = off */
+#define APP_CONF_ALERT_RMS_THRESHOLD 500
+
+/* Samples per RAW packet (6 bytes each) */
+#define APP_CONF_RAW_SAMPLES_PER_PACKET 8
+
+
+/* =========================================================
  * IPv6 / 6LoWPAN
  * ========================================================= */
 
@@ -243,6 +262,8 @@
 #undef TSCH_QUEUE_CONF_MAX_NEIGHBOR_QUEUES
 #define TSCH_QUEUE_CONF_MAX_NEIGHBOR_QUEUES 8
 
+#undef TSCH_CONF_DEFAULT_TIMESLOT_LENGTH
+#define TSCH_CONF_DEFAULT_TIMESLOT_LENGTH 10000
 
 /* =========================================================
  * MAC / RDC

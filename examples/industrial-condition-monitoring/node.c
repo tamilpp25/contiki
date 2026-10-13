@@ -10,6 +10,8 @@
 #include "net/rpl/rpl.h"
 
 #include "rpl-tools.h"
+#include "packet-format.h"
+#include "sensor.h"
 #include "node-id.h"
 #include "leds.h"
 #include <stdio.h>
@@ -17,18 +19,36 @@
 
 
 /* =========================================================
- * Configuration
+ * Configuration (override in project-conf.h)
  * ========================================================= */
 
 #define UDP_PORT 8185
 
 #define STARTUP_DELAY (7 * CLOCK_SECOND)
 
-/* Send one value every 5 seconds */
-#define SEND_INTERVAL (5 * CLOCK_SECOND)
-
 /* How often we check whether RPL has joined a DAG */
 #define JOIN_CHECK_INTERVAL (1 * CLOCK_SECOND)
+
+/* How often an RMS frame is sent */
+#ifdef APP_CONF_RMS_SEND_INTERVAL
+#define RMS_SEND_INTERVAL APP_CONF_RMS_SEND_INTERVAL
+#else
+#define RMS_SEND_INTERVAL (30 * CLOCK_SECOND)
+#endif
+
+/* RMS (milli-g) above which an alert + raw window is sent. 0 = never */
+#ifdef APP_CONF_ALERT_RMS_THRESHOLD
+#define ALERT_RMS_THRESHOLD APP_CONF_ALERT_RMS_THRESHOLD
+#else
+#define ALERT_RMS_THRESHOLD 500
+#endif
+
+#define RAW_TOTAL_CHUNKS \
+  ((WINDOW_SAMPLES + RAW_SAMPLES_PER_PACKET - 1) / RAW_SAMPLES_PER_PACKET)
+
+#if RAW_TOTAL_CHUNKS > 255
+#error "Too many RAW chunks per window; raise RAW_SAMPLES_PER_PACKET"
+#endif
 
 
 /*
@@ -53,12 +73,80 @@ AUTOSTART_PROCESSES(&leaf_process);
 static struct uip_udp_conn *udp_conn;
 
 
+/* Window counter, shared by all packets of one window */
+static uint8_t seq;
+
+
+/* =========================================================
+ * Packet senders
+ * ========================================================= */
+
+static void
+fill_hdr(struct pkt_hdr *hdr, uint8_t type)
+{
+  hdr->type = type;
+  hdr->seq = seq;
+  hdr->node_id = node_id;
+}
+
+static void
+send_rms(const uint16_t rms[3])
+{
+  struct pkt_rms pkt;
+
+  memset(&pkt, 0, sizeof(pkt));
+  fill_hdr(&pkt.hdr, PKT_RMS);
+  pkt.x = rms[0];
+  pkt.y = rms[1];
+  pkt.z = rms[2];
+
+  uip_udp_packet_send(udp_conn, &pkt, sizeof(pkt));
+}
+
+static void
+send_alert(const uint16_t rms[3], uint8_t axes)
+{
+  struct pkt_alert pkt;
+
+  memset(&pkt, 0, sizeof(pkt));
+  fill_hdr(&pkt.hdr, PKT_ALERT);
+  pkt.x = rms[0];
+  pkt.y = rms[1];
+  pkt.z = rms[2];
+  pkt.axes = axes;
+
+  uip_udp_packet_send(udp_conn, &pkt, sizeof(pkt));
+}
+
+/* Send the whole current window as RAW chunks */
+static void
+send_raw_window(void)
+{
+  struct pkt_raw pkt;
+  uint8_t chunk;
+
+  for(chunk = 0; chunk < RAW_TOTAL_CHUNKS; chunk++) {
+    uint16_t first = chunk * RAW_SAMPLES_PER_PACKET;
+    uint8_t i;
+
+    memset(&pkt, 0, sizeof(pkt));
+    fill_hdr(&pkt.hdr, PKT_RAW);
+    pkt.index = chunk;
+
+    for(i = 0; i < RAW_SAMPLES_PER_PACKET && first + i < WINDOW_SAMPLES; i++) {
+      sensor_get_sample(first + i, pkt.xyz[i]);
+    }
+    pkt.count = i;
+
+    uip_udp_packet_send(udp_conn, &pkt, sizeof(pkt));
+  }
+}
+
+
 PROCESS_THREAD(leaf_process, ev, data)
 {
   static struct etimer startup_timer;
   static struct etimer send_timer;
-
-  static int value = 0;
 
   PROCESS_BEGIN();
 
@@ -125,35 +213,59 @@ uip_ip6addr(&coordinator_ipaddr,
 
   leds_arch_set(LEDS_GREEN);
 
-  printf("\n[LEAF] Starting UDP transmission\n");
+  printf("\n[LEAF] Starting RMS reporting: every %lu s, %u ms window, "
+         "%u samples\n",
+         (unsigned long)(RMS_SEND_INTERVAL / CLOCK_SECOND),
+         RMS_WINDOW_MS, WINDOW_SAMPLES);
 
 
   /* -------------------------------------------------------
-   * Periodic UDP transmission
+   * Periodic RMS transmission
    * ------------------------------------------------------- */
 
-  etimer_set(&send_timer, SEND_INTERVAL);
+  etimer_set(&send_timer, RMS_SEND_INTERVAL);
 
   while(1) {
 
     PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&send_timer));
+    etimer_reset(&send_timer);
 
     if(rpl_get_any_dag() != NULL) {
-      char message[16];
-      int len;
+      uint16_t rms[3];
 
-      value += 10;
+      sensor_sample_window();
+      sensor_window_rms(rms);
 
-      len = snprintf(message, sizeof(message), "%d", value);
+      printf("\n[LEAF] RMS seq %u: x=%u y=%u z=%u mg\n",
+             seq, rms[0], rms[1], rms[2]);
+      send_rms(rms);
 
-      printf("\n[LEAF] Sending value = %s\n", message);
+#if ALERT_RMS_THRESHOLD > 0
+      {
+        uint8_t axes = 0;
 
-      uip_udp_packet_send(udp_conn, message, len);
+        if(rms[0] > ALERT_RMS_THRESHOLD) {
+          axes |= 1;
+        }
+        if(rms[1] > ALERT_RMS_THRESHOLD) {
+          axes |= 2;
+        }
+        if(rms[2] > ALERT_RMS_THRESHOLD) {
+          axes |= 4;
+        }
+        if(axes) {
+          printf("[LEAF] ALERT axes 0x%x, sending %u raw packets\n",
+                 axes, RAW_TOTAL_CHUNKS);
+          send_alert(rms, axes);
+          send_raw_window();
+        }
+      }
+#endif
+
+      seq++;
     } else {
       printf("[LEAF] No DAG yet, skipping send\n");
     }
-
-    etimer_reset(&send_timer);
   }
 
   PROCESS_END();

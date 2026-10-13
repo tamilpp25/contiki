@@ -1,0 +1,114 @@
+#include "contiki.h"
+#include "sensor.h"
+
+#include "lib/random.h"
+#include "sys/rtimer.h"
+#include "dev/watchdog.h"
+
+
+/* One sampling window, milli-g */
+static int16_t win_x[WINDOW_SAMPLES];
+static int16_t win_y[WINDOW_SAMPLES];
+static int16_t win_z[WINDOW_SAMPLES];
+
+
+/* =========================================================
+ * Accelerometer
+ * ========================================================= */
+
+/*
+ * PLACEHOLDER: no accelerometer driver is wired up yet. This returns
+ * synthetic data (gravity on z plus noise) so the packet path can be
+ * tested. Replace the body with the real 3-axis driver read, returning
+ * milli-g.
+ */
+static void
+accel_read_xyz(int16_t *x, int16_t *y, int16_t *z)
+{
+  *x = (int16_t)(random_rand() % 201) - 100;
+  *y = (int16_t)(random_rand() % 201) - 100;
+  *z = 1000 + (int16_t)(random_rand() % 201) - 100;
+}
+
+/*
+ * Busy-waits for RMS_WINDOW_MS; TSCH runs from rtimer interrupts so it
+ * keeps working.
+ */
+void
+sensor_sample_window(void)
+{
+  const rtimer_clock_t period = RTIMER_SECOND / SAMPLE_RATE_HZ;
+  rtimer_clock_t next = RTIMER_NOW();
+  uint16_t i;
+
+  for(i = 0; i < WINDOW_SAMPLES; i++) {
+    while(RTIMER_CLOCK_LT(RTIMER_NOW(), next)) {
+      watchdog_periodic();
+    }
+    accel_read_xyz(&win_x[i], &win_y[i], &win_z[i]);
+    next += period;
+  }
+}
+
+void
+sensor_get_sample(uint16_t i, int16_t xyz[3])
+{
+  xyz[0] = win_x[i];
+  xyz[1] = win_y[i];
+  xyz[2] = win_z[i];
+}
+
+
+/* =========================================================
+ * RMS
+ * ========================================================= */
+
+static uint32_t
+isqrt32(uint32_t v)
+{
+  uint32_t res = 0;
+  uint32_t bit = 1UL << 30;
+
+  while(bit > v) {
+    bit >>= 2;
+  }
+  while(bit != 0) {
+    if(v >= res + bit) {
+      v -= res + bit;
+      res = (res >> 1) + bit;
+    } else {
+      res >>= 1;
+    }
+    bit >>= 2;
+  }
+  return res;
+}
+
+/* RMS of the AC part (mean removed, so gravity does not dominate) */
+static uint16_t
+axis_rms(const int16_t *s)
+{
+  int32_t sum = 0;
+  int32_t mean;
+  uint64_t sum_sq = 0;
+  uint16_t i;
+
+  for(i = 0; i < WINDOW_SAMPLES; i++) {
+    sum += s[i];
+  }
+  mean = sum / WINDOW_SAMPLES;
+
+  for(i = 0; i < WINDOW_SAMPLES; i++) {
+    int32_t d = s[i] - mean;
+    sum_sq += (uint64_t)((int64_t)d * d);
+  }
+  return (uint16_t)isqrt32((uint32_t)(sum_sq / WINDOW_SAMPLES));
+}
+
+void
+sensor_window_rms(uint16_t rms[3])
+{
+  rms[0] = axis_rms(win_x);
+  rms[1] = axis_rms(win_y);
+  rms[2] = axis_rms(win_z);
+}
