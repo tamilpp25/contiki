@@ -156,10 +156,6 @@
 /* RMS frame period: 30 s or 60 s */
 #define APP_CONF_RMS_SEND_INTERVAL (30 * CLOCK_SECOND)
 
-/* RMS window length and sampling rate (80 samples per window) */
-#define APP_CONF_RMS_WINDOW_MS 80
-#define APP_CONF_SAMPLE_RATE_HZ 1000
-
 /* Per-axis RMS (milli-g) that triggers ALERT + RAW frames, 0 = off */
 #define APP_CONF_ALERT_RMS_THRESHOLD 500
 

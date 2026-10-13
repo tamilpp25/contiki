@@ -4,23 +4,16 @@
 #include <stdint.h>
 
 /* =========================================================
- * Configuration (override in project-conf.h)
+ * Sampling configuration
  * ========================================================= */
 
 /* Length of the sampling window the RMS is computed over */
-#ifdef APP_CONF_RMS_WINDOW_MS
-#define RMS_WINDOW_MS APP_CONF_RMS_WINDOW_MS
-#else
 #define RMS_WINDOW_MS 80
-#endif
 
 /* Accelerometer sampling rate inside the window */
-#ifdef APP_CONF_SAMPLE_RATE_HZ
-#define SAMPLE_RATE_HZ APP_CONF_SAMPLE_RATE_HZ
-#else
 #define SAMPLE_RATE_HZ 1000
-#endif
 
+/* Samples per window (80) */
 #define WINDOW_SAMPLES ((RMS_WINDOW_MS * SAMPLE_RATE_HZ) / 1000)
 
 #if WINDOW_SAMPLES < 1 || WINDOW_SAMPLES > 1000
