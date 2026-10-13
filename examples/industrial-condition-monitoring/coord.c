@@ -47,23 +47,23 @@ print_packet(uint16_t len)
   uint8_t i;
 
   switch(pkt.hdr.type) {
-  case PKT_RMS:
+  case PACKET_FORMAT_TYPE_RMS:
     printf("[COORD] RMS node %u seq %u: x=%u y=%u z=%u mg\n",
            pkt.hdr.node_id, pkt.hdr.seq, pkt.rms.x, pkt.rms.y, pkt.rms.z);
     break;
 
-  case PKT_ALERT:
+  case PACKET_FORMAT_TYPE_ALERT:
     printf("[COORD] ALERT node %u seq %u axes 0x%x: x=%u y=%u z=%u mg\n",
            pkt.hdr.node_id, pkt.hdr.seq, pkt.alert.axes,
            pkt.alert.x, pkt.alert.y, pkt.alert.z);
     break;
 
-  case PKT_RAW:
+  case PACKET_FORMAT_TYPE_RAW:
     printf("[COORD] RAW node %u seq %u chunk %u (%u samples)\n",
            pkt.hdr.node_id, pkt.hdr.seq, pkt.raw.index, pkt.raw.count);
-    for(i = 0; i < pkt.raw.count && i < RAW_SAMPLES_PER_PACKET; i++) {
+    for(i = 0; i < pkt.raw.count && i < PACKET_FORMAT_RAW_SAMPLES_PER_PACKET; i++) {
       printf("  %u: %d %d %d\n",
-             pkt.raw.index * RAW_SAMPLES_PER_PACKET + i,
+             pkt.raw.index * PACKET_FORMAT_RAW_SAMPLES_PER_PACKET + i,
              pkt.raw.xyz[i][0], pkt.raw.xyz[i][1], pkt.raw.xyz[i][2]);
     }
     break;

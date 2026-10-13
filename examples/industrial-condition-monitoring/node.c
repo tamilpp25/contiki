@@ -29,40 +29,6 @@
 /* How often we check whether RPL has joined a DAG */
 #define JOIN_CHECK_INTERVAL (1 * CLOCK_SECOND)
 
-/* How often an RMS frame is sent */
-#ifdef APP_CONF_RMS_SEND_INTERVAL
-#define RMS_SEND_INTERVAL APP_CONF_RMS_SEND_INTERVAL
-#else
-#define RMS_SEND_INTERVAL (30 * CLOCK_SECOND)
-#endif
-
-/* How often a window is sampled and checked against the alert threshold */
-#ifdef APP_CONF_ALERT_CHECK_INTERVAL
-#define ALERT_CHECK_INTERVAL APP_CONF_ALERT_CHECK_INTERVAL
-#else
-#define ALERT_CHECK_INTERVAL (5 * CLOCK_SECOND)
-#endif
-
-/* Per-axis RMS (milli-g) above which an ALERT is sent. 0 = never */
-#ifdef APP_CONF_ALERT_RMS_THRESHOLD
-#define ALERT_RMS_THRESHOLD APP_CONF_ALERT_RMS_THRESHOLD
-#else
-#define ALERT_RMS_THRESHOLD 90
-#endif
-
-/* Also send the raw window after an ALERT (disabled for now) */
-#ifdef APP_CONF_SEND_RAW_ON_ALERT
-#define SEND_RAW_ON_ALERT APP_CONF_SEND_RAW_ON_ALERT
-#else
-#define SEND_RAW_ON_ALERT 0
-#endif
-
-#define RAW_TOTAL_CHUNKS \
-  ((WINDOW_SAMPLES + RAW_SAMPLES_PER_PACKET - 1) / RAW_SAMPLES_PER_PACKET)
-
-#if RAW_TOTAL_CHUNKS > 255
-#error "Too many RAW chunks per window; raise RAW_SAMPLES_PER_PACKET"
-#endif
 
 
 /*
@@ -109,7 +75,7 @@ send_rms(const uint16_t rms[3])
   struct pkt_rms pkt;
 
   memset(&pkt, 0, sizeof(pkt));
-  fill_hdr(&pkt.hdr, PKT_RMS);
+  fill_hdr(&pkt.hdr, PACKET_FORMAT_TYPE_RMS);
   pkt.x = rms[0];
   pkt.y = rms[1];
   pkt.z = rms[2];
@@ -123,7 +89,7 @@ send_alert(const uint16_t rms[3], uint8_t axes)
   struct pkt_alert pkt;
 
   memset(&pkt, 0, sizeof(pkt));
-  fill_hdr(&pkt.hdr, PKT_ALERT);
+  fill_hdr(&pkt.hdr, PACKET_FORMAT_TYPE_ALERT);
   pkt.x = rms[0];
   pkt.y = rms[1];
   pkt.z = rms[2];
@@ -132,7 +98,7 @@ send_alert(const uint16_t rms[3], uint8_t axes)
   uip_udp_packet_send(udp_conn, &pkt, sizeof(pkt));
 }
 
-#if SEND_RAW_ON_ALERT
+#if APP_CONF_SEND_RAW_ON_ALERT
 /* Send the whole current window as RAW chunks */
 static void
 send_raw_window(void)
@@ -140,15 +106,15 @@ send_raw_window(void)
   struct pkt_raw pkt;
   uint8_t chunk;
 
-  for(chunk = 0; chunk < RAW_TOTAL_CHUNKS; chunk++) {
-    uint16_t first = chunk * RAW_SAMPLES_PER_PACKET;
+  for(chunk = 0; chunk < PACKET_FORMAT_RAW_TOTAL_CHUNKS; chunk++) {
+    uint16_t first = chunk * PACKET_FORMAT_RAW_SAMPLES_PER_PACKET;
     uint8_t i;
 
     memset(&pkt, 0, sizeof(pkt));
-    fill_hdr(&pkt.hdr, PKT_RAW);
+    fill_hdr(&pkt.hdr, PACKET_FORMAT_TYPE_RAW);
     pkt.index = chunk;
 
-    for(i = 0; i < RAW_SAMPLES_PER_PACKET && first + i < WINDOW_SAMPLES; i++) {
+    for(i = 0; i < PACKET_FORMAT_RAW_SAMPLES_PER_PACKET && first + i < WINDOW_SAMPLES; i++) {
       sensor_get_sample(first + i, pkt.xyz[i]);
     }
     pkt.count = i;
@@ -156,7 +122,7 @@ send_raw_window(void)
     uip_udp_packet_send(udp_conn, &pkt, sizeof(pkt));
   }
 }
-#endif /* SEND_RAW_ON_ALERT */
+#endif /* APP_CONF_SEND_RAW_ON_ALERT */
 
 /* Bitmask of axes whose RMS is over the threshold: bit0 x, bit1 y, bit2 z */
 static uint8_t
@@ -164,14 +130,14 @@ axes_over_threshold(const uint16_t rms[3])
 {
   uint8_t axes = 0;
 
-#if ALERT_RMS_THRESHOLD > 0
-  if(rms[0] > ALERT_RMS_THRESHOLD) {
+#if APP_CONF_ALERT_RMS_THRESHOLD > 0
+  if(rms[0] > APP_CONF_ALERT_RMS_THRESHOLD) {
     axes |= 1;
   }
-  if(rms[1] > ALERT_RMS_THRESHOLD) {
+  if(rms[1] > APP_CONF_ALERT_RMS_THRESHOLD) {
     axes |= 2;
   }
-  if(rms[2] > ALERT_RMS_THRESHOLD) {
+  if(rms[2] > APP_CONF_ALERT_RMS_THRESHOLD) {
     axes |= 4;
   }
 #endif
@@ -253,21 +219,21 @@ uip_ip6addr(&coordinator_ipaddr,
   printf("\n[LEAF] Monitoring: %u ms window (%u samples) every %lu s, "
          "RMS report every %lu s, alert above %u mg\n",
          RMS_WINDOW_MS, WINDOW_SAMPLES,
-         (unsigned long)(ALERT_CHECK_INTERVAL / CLOCK_SECOND),
-         (unsigned long)(RMS_SEND_INTERVAL / CLOCK_SECOND),
-         ALERT_RMS_THRESHOLD);
+         (unsigned long)(APP_CONF_ALERT_CHECK_INTERVAL / CLOCK_SECOND),
+         (unsigned long)(APP_CONF_RMS_SEND_INTERVAL / CLOCK_SECOND),
+         APP_CONF_ALERT_RMS_THRESHOLD);
 
 
   /* -------------------------------------------------------
    * Monitoring loop
    *
-   * Every ALERT_CHECK_INTERVAL: sample a window, compute RMS and send
+   * Every APP_CONF_ALERT_CHECK_INTERVAL: sample a window, compute RMS and send
    * an ALERT right away if any axis is over the threshold.
-   * Every RMS_SEND_INTERVAL: also send that window's RMS.
+   * Every APP_CONF_RMS_SEND_INTERVAL: also send that window's RMS.
    * ------------------------------------------------------- */
 
-  etimer_set(&send_timer, ALERT_CHECK_INTERVAL);
-  etimer_set(&rms_timer, RMS_SEND_INTERVAL);
+  etimer_set(&send_timer, APP_CONF_ALERT_CHECK_INTERVAL);
+  etimer_set(&rms_timer, APP_CONF_RMS_SEND_INTERVAL);
 
   while(1) {
 
@@ -286,7 +252,7 @@ uip_ip6addr(&coordinator_ipaddr,
         printf("\n[LEAF] ALERT seq %u axes 0x%x: x=%u y=%u z=%u mg\n",
                seq, axes, rms[0], rms[1], rms[2]);
         send_alert(rms, axes);
-#if SEND_RAW_ON_ALERT
+#if APP_CONF_SEND_RAW_ON_ALERT
         send_raw_window();
 #endif
       }

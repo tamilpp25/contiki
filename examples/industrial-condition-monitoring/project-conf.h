@@ -171,11 +171,11 @@
  */
 #define APP_CONF_ALERT_RMS_THRESHOLD 90
 
-/* Also send the raw window after an ALERT (off for now) */
+/* Also send the raw window after an ALERT */
 #define APP_CONF_SEND_RAW_ON_ALERT 0
 
 /* Samples per RAW packet (6 bytes each) */
-#define APP_CONF_RAW_SAMPLES_PER_PACKET 8
+#define PACKET_FORMAT_CONF_RAW_SAMPLES_PER_PACKET 8
 
 
 /* =========================================================
